@@ -1,0 +1,347 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class Producto {
+  final int id;
+  final String nombre;
+  final String categoria;
+  final double precio;
+  final String descripcion;
+  final String imagen;
+
+  Producto({
+    required this.id,
+    required this.nombre,
+    required this.categoria,
+    required this.precio,
+    required this.descripcion,
+    required this.imagen,
+  });
+
+  factory Producto.fromJson(Map<String, dynamic> json) {
+    double convertirNumero(dynamic valor) {
+      if (valor is num) return valor.toDouble();
+      return double.tryParse('$valor') ?? 0.0;
+    }
+
+    return Producto(
+      id: int.tryParse('${json['id']}') ?? 0,
+      nombre: '${json['title'] ?? 'Sin nombre'}',
+      categoria: '${json['category'] ?? 'Sin categoría'}',
+      precio: convertirNumero(json['price']),
+      descripcion: '${json['description'] ?? 'Sin descripción'}',
+      imagen: '${json['thumbnail'] ?? ''}',
+    );
+  }
+}
+
+class ProductoServicio {
+  Future<List<Producto>> buscar(String texto) async {
+    final url = Uri.parse(
+      'https://dummyjson.com/products/search?q='
+      '${Uri.encodeComponent(texto)}&limit=20',
+    );
+
+    final respuesta = await http.get(url);
+
+    if (respuesta.statusCode == 200) {
+      final datos = jsonDecode(respuesta.body);
+      final lista = datos['products'] as List? ?? [];
+
+      return lista
+          .map((producto) =>
+              Producto.fromJson(producto as Map<String, dynamic>))
+          .toList();
+    } else {
+      throw Exception('Error al conectar con el servidor');
+    }
+  }
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Buscador de productos',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
+      ),
+      home: const BuscadorPage(),
+    );
+  }
+}
+
+class BuscadorPage extends StatefulWidget {
+  const BuscadorPage({super.key});
+
+  @override
+  State<BuscadorPage> createState() => _BuscadorPageState();
+}
+
+class _BuscadorPageState extends State<BuscadorPage> {
+  final TextEditingController controlador = TextEditingController();
+  final ProductoServicio servicio = ProductoServicio();
+
+  List<Producto> productos = [];
+  bool cargando = false;
+  String mensaje = '';
+  String busqueda = '';
+
+  Future<void> realizarBusqueda() async {
+    final texto = controlador.text.trim();
+
+    if (texto.isEmpty) {
+      setState(() {
+        productos = [];
+        mensaje = 'Escribe un producto para buscar.';
+        busqueda = '';
+      });
+      return;
+    }
+
+    setState(() {
+      cargando = true;
+      mensaje = '';
+      busqueda = texto;
+    });
+
+    try {
+      final resultado = await servicio.buscar(texto);
+
+      if (!mounted) return;
+
+      setState(() {
+        productos = resultado;
+        cargando = false;
+
+        if (resultado.isEmpty) {
+          mensaje = 'No se encontraron resultados.';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        productos = [];
+        cargando = false;
+        mensaje = 'No hay conexión con el servicio.';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    controlador.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Buscador de productos'),
+        centerTitle: true,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: controlador,
+                    onSubmitted: (_) => realizarBusqueda(),
+                    decoration: const InputDecoration(
+                      labelText: 'Buscar producto',
+                      hintText: 'Ej.: phone',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: cargando ? null : realizarBusqueda,
+                  child: const Text('Buscar'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Expanded(child: mostrarContenido()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget mostrarContenido() {
+    if (cargando) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (productos.isEmpty) {
+      return Center(
+        child: Text(
+          mensaje.isEmpty
+              ? 'Escribe un producto para comenzar.'
+              : mensaje,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 16),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${productos.length} resultado(s) para "$busqueda"',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: ListView.builder(
+            itemCount: productos.length,
+            itemBuilder: (context, index) {
+              final producto = productos[index];
+              final precioBs = producto.precio * 12.26;
+
+              return Card(
+                child: ListTile(
+                  leading: producto.imagen.isNotEmpty
+                      ? Image.network(
+                          producto.imagen,
+                          width: 55,
+                          height: 55,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stack) {
+                            return const Icon(Icons.shopping_bag);
+                          },
+                        )
+                      : const Icon(Icons.shopping_bag),
+                  title: Text(
+                    producto.nombre,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${producto.categoria}\n'
+                    '\$us ${producto.precio.toStringAsFixed(2)}'
+                    '   |   Bs ${precioBs.toStringAsFixed(2)}',
+                  ),
+                  isThreeLine: true,
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) {
+                          return DetallePage(producto: producto);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class DetallePage extends StatelessWidget {
+  final Producto producto;
+
+  const DetallePage({
+    super.key,
+    required this.producto,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final precioBs = producto.precio * 12.26;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Detalle del producto'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (producto.imagen.isNotEmpty)
+              Center(
+                child: Image.network(
+                  producto.imagen,
+                  height: 220,
+                  errorBuilder: (context, error, stack) {
+                    return const Icon(
+                      Icons.image_not_supported,
+                      size: 100,
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 20),
+            Text(
+              producto.nombre,
+              style: const TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Categoría: ${producto.categoria}',
+              style: const TextStyle(fontSize: 17),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '\$us ${producto.precio.toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              'Bs ${precioBs.toStringAsFixed(2)}',
+              style: const TextStyle(fontSize: 19),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'Descripción',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              producto.descripcion,
+              style: const TextStyle(fontSize: 16),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
