@@ -1,0 +1,502 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+void main() {
+  runApp(const App());
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Nueva publicación',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: const Color(0xFF713044),
+      ),
+      home: const NuevaPublicacion(),
+    );
+  }
+}
+
+class NuevaPublicacion extends StatefulWidget {
+  const NuevaPublicacion({super.key});
+
+  @override
+  State<NuevaPublicacion> createState() => _NuevaPublicacionState();
+}
+
+class _NuevaPublicacionState extends State<NuevaPublicacion> {
+  final formKey = GlobalKey<FormState>();
+
+  final tituloController = TextEditingController();
+  final contenidoController = TextEditingController();
+  final usuarioController = TextEditingController(text: '1');
+
+  bool enviando = false;
+  bool exitoso = false;
+  bool mostrarResultado = false;
+
+  String mensaje = '';
+  String idCreado = '';
+
+  final String apiUrl = 'https://dummyjson.com/posts/add';
+
+  @override
+  void dispose() {
+    tituloController.dispose();
+    contenidoController.dispose();
+    usuarioController.dispose();
+    super.dispose();
+  }
+
+  String? validarTitulo(String? value) {
+    final texto = value?.trim() ?? '';
+
+    if (texto.isEmpty) {
+      return 'El título es obligatorio';
+    }
+
+    if (texto.length < 3) {
+      return 'Mínimo 3 caracteres';
+    }
+
+    if (texto.length > 80) {
+      return 'Máximo 80 caracteres';
+    }
+
+    return null;
+  }
+
+  String? validarContenido(String? value) {
+    final texto = value?.trim() ?? '';
+
+    if (texto.isEmpty) {
+      return 'El contenido es obligatorio';
+    }
+
+    if (texto.length < 5) {
+      return 'Mínimo 5 caracteres';
+    }
+
+    if (texto.length > 1000) {
+      return 'Máximo 1000 caracteres';
+    }
+
+    return null;
+  }
+
+  String? validarUsuario(String? value) {
+    final texto = value?.trim() ?? '';
+
+    if (texto.isEmpty) {
+      return 'El ID del autor es obligatorio';
+    }
+
+    final numero = int.tryParse(texto);
+
+    if (numero == null) {
+      return 'Debe ser un número entero';
+    }
+
+    if (numero < 1 || numero > 100) {
+      return 'Un número entre 1 y 100';
+    }
+
+    return null;
+  }
+
+  Future<void> registrar() async {
+    if (enviando) {
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    final valido = formKey.currentState?.validate() ?? false;
+
+    if (!valido) {
+      setState(() {
+        mostrarResultado = true;
+        exitoso = false;
+        mensaje = 'Corrige los errores del formulario.';
+        idCreado = '';
+      });
+      return;
+    }
+
+    final titulo = tituloController.text.trim();
+    final contenido = contenidoController.text.trim();
+    final usuario = int.parse(usuarioController.text.trim());
+
+    setState(() {
+      enviando = true;
+      mostrarResultado = false;
+      exitoso = false;
+      mensaje = '';
+      idCreado = '';
+    });
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse(apiUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({
+              'title': titulo,
+              'body': contenido,
+              'userId': usuario,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300) {
+        final data = jsonDecode(response.body);
+
+        if (data is Map && data['id'] != null) {
+          setState(() {
+            exitoso = true;
+            mostrarResultado = true;
+            idCreado = data['id'].toString();
+            mensaje =
+                'El servidor asignó el identificador $idCreado a "$titulo".';
+          });
+        } else {
+          setState(() {
+            exitoso = false;
+            mostrarResultado = true;
+            mensaje =
+                'El servidor no devolvió un identificador válido.';
+          });
+        }
+      } else {
+        String textoError;
+
+        if (response.statusCode == 400) {
+          textoError =
+              'Solicitud incorrecta. Revisa los datos enviados.';
+        } else if (response.statusCode == 401) {
+          textoError = 'No autorizado.';
+        } else if (response.statusCode == 403) {
+          textoError = 'El servidor rechazó la operación.';
+        } else if (response.statusCode == 404) {
+          textoError = 'Servicio no encontrado.';
+        } else if (response.statusCode >= 500) {
+          textoError =
+              'Error del servidor: ${response.statusCode}.';
+        } else {
+          textoError =
+              'El servidor respondió con código ${response.statusCode}.';
+        }
+
+        setState(() {
+          exitoso = false;
+          mostrarResultado = true;
+          mensaje = textoError;
+        });
+      }
+    } on TimeoutException {
+      setState(() {
+        exitoso = false;
+        mostrarResultado = true;
+        mensaje =
+            'La solicitud tardó demasiado. Verifica tu conexión.';
+      });
+    } on http.ClientException {
+      setState(() {
+        exitoso = false;
+        mostrarResultado = true;
+        mensaje =
+            'No se pudo conectar con el servidor.';
+      });
+    } catch (e) {
+      setState(() {
+        exitoso = false;
+        mostrarResultado = true;
+        mensaje =
+            'Ocurrió un error inesperado al realizar el envío.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          enviando = false;
+        });
+      }
+    }
+  }
+
+  void limpiar() {
+    if (!exitoso || enviando) {
+      return;
+    }
+
+    tituloController.clear();
+    contenidoController.clear();
+    usuarioController.text = '1';
+
+    setState(() {
+      mostrarResultado = false;
+      exitoso = false;
+      mensaje = '';
+      idCreado = '';
+    });
+
+    formKey.currentState?.reset();
+  }
+
+  Widget resultado() {
+    if (exitoso) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          border: Border.all(
+            color: Colors.green,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '✓ Publicación registrada',
+              style: TextStyle(
+                color: Colors.green,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(mensaje),
+            const SizedBox(height: 8),
+            Text(
+              'Publicación creada con el id $idCreado',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: limpiar,
+              child: const Text('Limpiar formulario'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        border: Border.all(
+          color: Colors.red,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '✗ No se pudo registrar la publicación',
+            style: TextStyle(
+              color: Colors.red,
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(mensaje),
+          const SizedBox(height: 8),
+          const Text(
+            'Tus datos se mantienen para que puedas corregirlos y volver a intentar.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F5),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              color: const Color(0xFF713044),
+              child: const Text(
+                'Nueva publicación',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 25,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 850,
+                    ),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Form(
+                          key: formKey,
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'POST /posts/add',
+                                style: TextStyle(
+                                  color: Colors.blueGrey,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              const Text(
+                                'https://dummyjson.com/posts/add',
+                                style: TextStyle(
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(height: 25),
+
+                              TextFormField(
+                                controller: tituloController,
+                                enabled: !enviando,
+                                maxLength: 80,
+                                decoration: const InputDecoration(
+                                  labelText: 'Título',
+                                  border: OutlineInputBorder(),
+                                  counterText: '',
+                                ),
+                                validator: validarTitulo,
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              TextFormField(
+                                controller: contenidoController,
+                                enabled: !enviando,
+                                minLines: 5,
+                                maxLines: 8,
+                                maxLength: 1000,
+                                decoration: const InputDecoration(
+                                  labelText: 'Contenido',
+                                  alignLabelWithHint: true,
+                                  border: OutlineInputBorder(),
+                                  counterText: '',
+                                ),
+                                validator: validarContenido,
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              TextFormField(
+                                controller: usuarioController,
+                                enabled: !enviando,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Id del autor',
+                                  helperText: 'Un número entre 1 y 100',
+                                  border: OutlineInputBorder(),
+                                ),
+                                validator: validarUsuario,
+                                onFieldSubmitted: (_) {
+                                  registrar();
+                                },
+                              ),
+
+                              const SizedBox(height: 25),
+
+                              SizedBox(
+                                width: double.infinity,
+                                height: 52,
+                                child: ElevatedButton.icon(
+                                  onPressed:
+                                      enviando ? null : registrar,
+                                  icon: enviando
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child:
+                                              CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.cloud_upload,
+                                        ),
+                                  label: Text(
+                                    enviando
+                                        ? 'Registrando...'
+                                        : 'Registrar publicación',
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor:
+                                        const Color(0xFF713044),
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                              ),
+
+                              if (enviando)
+                                Container(
+                                  width: double.infinity,
+                                  margin: const EdgeInsets.only(
+                                    top: 15,
+                                  ),
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.shade50,
+                                    borderRadius:
+                                        BorderRadius.circular(8),
+                                  ),
+                                  child: const Text(
+                                    'Enviando publicación al servidor. Por favor espera...',
+                                  ),
+                                ),
+
+                              if (mostrarResultado && !enviando)
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 20,
+                                  ),
+                                  child: resultado(),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
